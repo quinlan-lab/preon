@@ -2,6 +2,7 @@ params.project = false
 params.fasta = false
 params.manifest = false
 params.width = 1000000
+params.chunksize = 30000000
 params.caddsnv = false
 params.caddindel = false
 params.outdir = './results'
@@ -29,20 +30,29 @@ cadd_indel_idx = cadd_indel ? file("${params.caddindel}.tbi") : false
 Channel.fromPath(params.manifest)
     .splitCsv(sep: '\t')
     .map { row ->
-        def sample = row[1]
+        def sample_id = row[1]
         def status = row[2].toInteger()
         def run_id = row[3]
         def r1 = file(row[4])
         def r2 = file(row[5])
-        tuple(sample, status, run_id, r1, r2)
+        [[sample_id, status, run_id], r1, r2]
+    }
+    // expects files as last 2 elements
+    .splitFastq(by: params.chunksize, pe:true, file:true)
+    .map { row ->
+        def identifiers = row[0]
+        def sample_id = identifiers[0]
+        def status = identifiers[1]
+        def run_id = identifiers[2]
+        def idx = row[1].baseName.split(/\\.fastq|\\.fq/)[0].split("\\.")[-1]
+        [sample_id, status, run_id, idx, row[1], row[2]]
     }
     .set { fastq_ch }
 
-
+// grab the indexes for bwa
 Channel
     .value(file("${params.fasta}.{amb,ann,bwt,pac,sa}"))
     .set { bwaidx_ch }
-
 
 // creates intervals across the genome for freebayes and vep
 intervals_ch = Channel
@@ -66,8 +76,8 @@ intervals_ch = Channel
             while(interval_start < interval_length) {
                 start = interval_start
                 // add a slight overlap
-                end = interval_start + width + 1000
-                interval_start = end - 1000
+                end = interval_start + width + 500
+                interval_start = end - 500
                 if (end > interval_length) {
                     end = interval_length
                     interval_start = end
@@ -78,32 +88,32 @@ intervals_ch = Channel
         }
     }
 
-
+// not currently in use
 // grabs chromosome IDs from the given reference
-Channel
-    .fromPath("${params.fasta}.fai")
-    .splitCsv(sep: "\t", strip: true)
-    .map { row -> "${row[0]}" }
-    .filter( ~/(?!${exclude.collect {".*$it.*"}.join("|")})([a-zA-Z0-9_]+)/ )
-    .into { chr_ch; gather_ch }
+// Channel
+//     .fromPath("${params.fasta}.fai")
+//     .splitCsv(sep: "\t", strip: true)
+//     .map { row -> "${row[0]}" }
+//     .filter( ~/(?!${exclude.collect {".*$it.*"}.join("|")})([a-zA-Z0-9_]+)/ )
+//     .into { chr_ch; gather_ch }
 
 
 process map_reads {
     tag { sample_id + "_" + run_id }
 
     input:
-    set sample_id, status, run_id, file(r1), file(r2) from fastq_ch
+    set sample_id, status, run_id, idx, file(r1), file(r2) from fastq_ch
     file(fasta)
     file(bwaidx) from bwaidx_ch
 
     output:
-    set sample_id, file("${sample_id}_${run_id}.bam") into bwa_ch
+    set sample_id, file("${sample_id}_${run_id}_${idx}.bam") into bwa_ch
 
     script:
     rg = "@RG\\tID:${run_id}\\tPU:${run_id}\\tSM:${sample_id}\\tLB:${sample_id}\\tPL:illumina"
     """
     bwa mem -K 100000000 -R \"${rg}\" -t ${task.cpus} -M $fasta $r1 $r2 \
-        | samtools sort --threads ${task.cpus} -m 2G --output-fmt BAM -o ${sample_id}_${run_id}.bam
+        | samtools sort -n --threads ${task.cpus} -m 2G --output-fmt BAM -o ${sample_id}_${run_id}_${idx}.bam
     """
 }
 
@@ -121,16 +131,12 @@ process mark_duplicates {
 
     script:
     """
-    gatk --java-options -Xmx${task.memory.toGiga()}g \
-        MarkDuplicates \
-        --MAX_RECORDS_IN_RAM 1000000 \
-        ${bam.collect { "--INPUT $it" }.join(" ")} \
-        --METRICS_FILE ${sample_id}.bam.metrics \
-        --TMP_DIR . \
-        --ASSUME_SORT_ORDER coordinate \
-        --OUTPUT ${sample_id}.md.bam
-    gatk --java-options -Xmx${task.memory.toGiga()}g \
-        BuildBamIndex \
+    gatk --java-options -Xmx${task.memory.toGiga()}g MarkDuplicatesSpark \
+        ${bam.collect { "--input $it" }.join(" ")} \
+        --output ${sample_id}.md.bam \
+        --tmp-dir . \
+        --spark-master \'local[*]\'
+    gatk --java-options -Xmx${task.memory.toGiga()}g BuildBamIndex \
         --INPUT ${sample_id}.md.bam \
         --OUTPUT ${sample_id}.md.bam.bai \
         --TMP_DIR .
