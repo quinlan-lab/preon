@@ -7,6 +7,18 @@ params.caddsnv = false
 params.caddindel = false
 params.outdir = './results'
 params.intervals = false
+params.sbgproject = false
+params.bed = false
+params.gff = false
+authtoken = "$AUTH_TOKEN"
+
+if (!params.sbgproject) {
+    exit 1, "--sbgproject needs to specify the project"
+}
+
+if (authtoken == "") {
+    exit 1, "--authtoken for SevenBridges must be defined for data upload. See: https://docs.sevenbridges.com/docs/get-your-authentication-token"
+}
 
 intervals = false
 if (params.intervals) {
@@ -17,6 +29,10 @@ fasta = file(params.fasta)
 faidx = file("${params.fasta}.fai")
 exclude = params.exclude.tokenize(',')
 outdir = file(params.outdir)
+bed = file(params.bed)
+gff = file(params.gff)
+sexchroms = params.sexchroms ?: 'X,Y'
+sexchroms = sexchroms.replaceAll(" ", "")
 
 // CADD references for VEP
 cadd_snv = file(params.caddsnv) ?: false
@@ -126,8 +142,8 @@ process mark_duplicates {
     set sample_id, file(bam) from bwa_ch.groupTuple()
 
     output:
-    file("${sample_id}.md.bam") into alignments_ch
-    file("${sample_id}.md.bam.bai") into alignment_indexes_ch
+    file("${sample_id}.md.bam") into alignments_ch, alignments_upload_ch, create_call_bams_ch
+    file("${sample_id}.md.bam.bai") into alignment_indexes_ch, alignment_indexes_upload_ch
 
     script:
     """
@@ -140,6 +156,22 @@ process mark_duplicates {
         --INPUT ${sample_id}.md.bam \
         --OUTPUT ${sample_id}.md.bam.bai \
         --TMP_DIR .
+    """
+}
+
+
+process upload_alignments {
+    label 'upload'
+
+    input:
+    env TOKEN from authtoken
+    env PROJECT from params.sbgproject
+    file(bam) from alignments_upload_ch
+    file(bai) from alignments_indexes_upload_ch
+
+    script:
+    """
+    sbg-uploader.sh --dry-run -t $TOKEN -p $PROJECT -f WGS/vep/ $bam $bai
     """
 }
 
@@ -171,7 +203,7 @@ process run_freebayes {
 
 
 process merge_vcfs {
-    publishDir path: "${params.outdir}/freebayes"
+    publishDir path: "$outdir/freebayes"
 
     input:
     file(vcf) from unannotated_ch.collect()
@@ -179,8 +211,8 @@ process merge_vcfs {
     file(faidx)
 
     output:
-    file("${params.project}.vcf.gz")
-    file("${params.project}.vcf.gz.tbi")
+    file("${params.project}.vcf.gz") into freebayesvcf_ch
+    file("${params.project}.vcf.gz.tbi") into freebayesvcfidx_ch
 
     script:
     """
@@ -191,6 +223,22 @@ process merge_vcfs {
         --output ${params.project}.vcf.gz --output-type z \
         ${params.project}_dirty_sorted.vcf.gz
     tabix -p vcf ${params.project}.vcf.gz
+    """
+}
+
+
+process upload_vcfs {
+    label 'upload'
+
+    input:
+    env TOKEN from authtoken
+    env PROJECT from params.sbgproject
+    file(vcf) from freebayesvcf_ch
+    file(tbi) from freebayesvcfidx_ch
+
+    script:
+    """
+    sbg-uploader.sh --dry-run -t $TOKEN -p $PROJECT -f WGS/freebayes/ $vcf $tbi
     """
 }
 
@@ -219,7 +267,7 @@ process annotate_vcf {
 
 
 process merge_annotated_vcfs {
-    publishDir path: "${params.outdir}/vep"
+    publishDir path: "$outdir/vep"
 
     input:
     file(vcf) from annotated_ch.collect()
@@ -227,8 +275,8 @@ process merge_annotated_vcfs {
     file(faidx)
 
     output:
-    file("${params.project}.vcf.gz")
-    file("${params.project}.vcf.gz.tbi")
+    file("${params.project}.vcf.gz") into vepvcf_ch
+    file("${params.project}.vcf.gz.tbi") into vepvcfidx_ch
 
     script:
     """
@@ -239,5 +287,175 @@ process merge_annotated_vcfs {
         --output ${params.project}.vcf.gz --output-type z \
         ${params.project}_dirty_sorted.vcf.gz
     tabix -p vcf ${params.project}.vcf.gz
+    """
+}
+
+
+process upload_annotated_vcfs {
+    label 'upload'
+
+    input:
+    env TOKEN from authtoken
+    env PROJECT from params.sbgproject
+    file(vcf) from vepvcf_ch
+    file(tbi) from vepvcfidx_ch
+
+    script:
+    """
+    sbg-uploader.sh --dry-run -t $TOKEN -p $PROJECT -f WGS/vep/ $vcf $tbi
+    """
+}
+
+
+// create channels for SV calling
+create_call_bams_ch
+    .map { file -> tuple(file.getSimpleName(), file, file + ("${file}".endsWith('.cram') ? '.crai' : '.bai')) }
+    .into { call_bams; genotype_bams }
+
+
+process smoove_call {
+    publishDir path: "$outdir/sv/smoove/called", pattern: "*.vcf.gz*"
+    publishDir path: "$outdir/sv/logs", pattern: "*-stats.txt"
+    publishDir path: "$outdir/sv/logs", pattern: "*-smoove-call.log"
+
+    input:
+    env SMOOVE_KEEP_ALL from params.sensitive
+    set sample, file(bam), file(bai) from call_bams
+    file fasta
+    file faidx
+    file bed
+
+    output:
+    file("${sample}-smoove.genotyped.vcf.gz") into call_vcfs
+    file("${sample}-smoove.genotyped.vcf.gz.csi") into call_idxs
+    file("${sample}-stats.txt") into variant_counts
+    file("${sample}-smoove-call.log") into sequence_counts
+
+    script:
+    excludechroms = params.exclude ? "--excludechroms \"${params.exclude}\"" : ""
+    filters = params.sensitive ? "--noextrafilters" : ""
+    """
+    smoove call --genotype --name $sample --processes ${task.cpus} \
+        --fasta $fasta --exclude $bed $excludechroms $filters \
+        $bam 2> >(tee -a ${sample}-smoove-call.log >&2)
+    bcftools stats ${sample}-smoove.genotyped.vcf.gz > ${sample}-stats.txt
+    """
+}
+
+
+process smoove_merge {
+    input:
+    file vcf from call_vcfs.collect()
+    file idx from call_idxs.collect()
+    file fasta
+    file faidx
+
+    output:
+    file("${project}.sites.vcf.gz") into sites
+
+    script:
+    """
+    smoove merge --name $project --fasta $fasta $vcf
+    """
+}
+
+
+process smoove_genotype {
+    publishDir path: "$outdir/smoove/genotyped"
+
+    input:
+    env SMOOVE_KEEP_ALL from params.sensitive
+    set sample, file(bam), file(bai) from genotype_bams
+    file sites
+    file fasta
+    file faidx
+
+    output:
+    file("${sample}-smoove.genotyped.vcf.gz.csi") into genotyped_idxs
+    file("${sample}-smoove.genotyped.vcf.gz") into genotyped_vcfs
+
+    script:
+    """
+    wget -q https://raw.githubusercontent.com/samtools/samtools/develop/misc/seq_cache_populate.pl
+    perl seq_cache_populate.pl -root \$(pwd)/cache $fasta 1> /dev/null 2> err || (cat err; exit 2)
+    export REF_PATH=\$(pwd)/cache/%2s/%2s/%s:http://www.ebi.ac.uk/ena/cram/md5/%s
+    export REF_CACHE=xx
+
+    samtools quickcheck -v $bam
+    smoove genotype --duphold --processes ${task.cpus} --removepr --outdir ./ --name ${sample} --fasta $fasta --vcf $sites $bam
+    """
+}
+
+
+process smoove_square {
+    publishDir path: "$outdir/smoove/annotated", pattern: "*.vcf.gz*"
+    publishDir path: "$outdir/reports/bpbio", pattern: "*.html"
+
+    input:
+    file vcf from genotyped_vcfs.collect()
+    file idx from genotyped_idxs.collect()
+    file gff
+
+    output:
+    file("${project}.smoove.square.anno.vcf.gz") into square_vcf
+    file("${project}.smoove.square.anno.vcf.gz.csi") into square_idx
+    file("svvcf.html") into svvcf
+
+    script:
+    smoovepaste = "smoove paste --outdir ./ --name $project $vcf"
+    if( vcf.collect().size() < 2 ) {
+        paste = "cp $vcf ${project}.smoove.square.vcf.gz && cp $idx ${project}.smoove.square.vcf.gz.csi"
+    }
+    """
+    $smoovepaste
+
+    smoove annotate --gff $gff ${project}.smoove.square.vcf.gz | bgzip --threads ${task.cpus} -c > ${project}.smoove.square.anno.vcf.gz
+    bcftools index ${project}.smoove.square.anno.vcf.gz
+    bpbio plot-sv-vcf ${project}.smoove.square.anno.vcf.gz
+    """
+}
+
+
+process run_indexcov {
+    publishDir path: "$outdir/reports/indexcov"
+
+    input:
+    file idx from index_ch.collect()
+    file faidx
+
+    output:
+    file("${project}*.png")
+    file("*.html")
+    file("${project}*.bed.gz") into bed_ch
+    file("${project}*.ped") into indexcov_ped_ch
+    file("${project}*.roc") into roc_ch
+
+    script:
+    excludepatt = params.exclude ? "--excludepatt \"${params.exclude}\"" : ""
+    """
+    goleft indexcov --sex $sexchroms $excludepatt --directory $project --fai $faidx $idx
+    mv $project/* .
+    """
+}
+
+
+process build_covviz_report {
+    publishDir path: "$outdir/reports", mode: "copy", pattern: "*.html"
+    label 'covviz'
+    cache 'lenient'
+
+    input:
+    file ped from indexcov_ped_ch
+    file bed from bed_ch
+    file gff
+
+    output:
+    file("covviz_report.html")
+
+    script:
+    """
+    covviz --min-samples ${params.minsamples} --sex-chroms $sexchroms --exclude '${params.exclude}' \
+        --skip-norm --z-threshold ${params.zthreshold} --distance-threshold ${params.distancethreshold} \
+        --slop ${params.slop} --ped ${ped} --gff ${gff} ${bed}
     """
 }
