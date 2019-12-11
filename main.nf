@@ -115,7 +115,7 @@ intervals_ch = Channel
 
 
 process map_reads {
-    tag { sample_id + "_" + run_id }
+    tag { "${sample_id}_${run_id}" }
 
     input:
     set sample_id, status, run_id, idx, file(r1), file(r2) from fastq_ch
@@ -135,15 +135,15 @@ process map_reads {
 
 
 process mark_duplicates {
-    tag "$sample_id"
+    tag "${sample_id}"
     publishDir path: "$outdir/alignments"
 
     input:
     set sample_id, file(bam) from bwa_ch.groupTuple()
 
     output:
-    file("${sample_id}.md.bam") into alignments_ch, alignments_upload_ch, create_call_bams_ch
-    file("${sample_id}.md.bam.bai") into alignment_indexes_ch, alignment_indexes_upload_ch
+    file("${sample_id}.md.bam") into (alignments_ch, alignments_upload_ch, create_call_bams_ch)
+    file("${sample_id}.md.bam.bai") into (alignment_indexes_ch, alignment_indexes_upload_ch, indexcov_input_ch)
 
     script:
     """
@@ -164,14 +164,15 @@ process upload_alignments {
     label 'upload'
 
     input:
-    env TOKEN from authtoken
-    env PROJECT from params.sbgproject
+    val token from authtoken
+    val sbgproject from params.sbgproject
     file(bam) from alignments_upload_ch
-    file(bai) from alignments_indexes_upload_ch
+    file(bai) from alignment_indexes_upload_ch
+
 
     script:
     """
-    sbg-uploader.sh --dry-run -t $TOKEN -p $PROJECT -f WGS/vep/ $bam $bai
+    sbg-uploader.sh --dry-run -t $token -p $sbgproject -f WGS/bam/ $bam $bai
     """
 }
 
@@ -231,14 +232,14 @@ process upload_vcfs {
     label 'upload'
 
     input:
-    env TOKEN from authtoken
-    env PROJECT from params.sbgproject
+    val token from authtoken
+    val sbgproject from params.sbgproject
     file(vcf) from freebayesvcf_ch
     file(tbi) from freebayesvcfidx_ch
 
     script:
     """
-    sbg-uploader.sh --dry-run -t $TOKEN -p $PROJECT -f WGS/freebayes/ $vcf $tbi
+    sbg-uploader.sh --dry-run -t $token -p $sbgproject -f WGS/freebayes/ $vcf $tbi
     """
 }
 
@@ -295,14 +296,14 @@ process upload_annotated_vcfs {
     label 'upload'
 
     input:
-    env TOKEN from authtoken
-    env PROJECT from params.sbgproject
+    val token from authtoken
+    val sbgproject from params.sbgproject
     file(vcf) from vepvcf_ch
     file(tbi) from vepvcfidx_ch
 
     script:
     """
-    sbg-uploader.sh --dry-run -t $TOKEN -p $PROJECT -f WGS/vep/ $vcf $tbi
+    sbg-uploader.sh --dry-run -t $token -p $sbgproject -f WGS/vep/ $vcf $tbi
     """
 }
 
@@ -420,7 +421,7 @@ process run_indexcov {
     publishDir path: "$outdir/reports/indexcov"
 
     input:
-    file idx from index_ch.collect()
+    file idx from indexcov_input_ch.collect()
     file faidx
 
     output:
