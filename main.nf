@@ -352,11 +352,11 @@ process smoove_merge {
     file faidx
 
     output:
-    file("${project}.sites.vcf.gz") into sites
+    file("${params.project}.sites.vcf.gz") into sites
 
     script:
     """
-    smoove merge --name $project --fasta $fasta $vcf
+    smoove merge --name ${params.project} --fasta $fasta $vcf
     """
 }
 
@@ -398,21 +398,21 @@ process smoove_square {
     file gff
 
     output:
-    file("${project}.smoove.square.anno.vcf.gz") into square_vcf
-    file("${project}.smoove.square.anno.vcf.gz.csi") into square_idx
+    file("${params.project}.smoove.square.anno.vcf.gz") into square_vcf
+    file("${params.project}.smoove.square.anno.vcf.gz.csi") into square_idx
     file("svvcf.html") into svvcf
 
     script:
     smoovepaste = "smoove paste --outdir ./ --name $project $vcf"
     if( vcf.collect().size() < 2 ) {
-        paste = "cp $vcf ${project}.smoove.square.vcf.gz && cp $idx ${project}.smoove.square.vcf.gz.csi"
+        paste = "cp $vcf ${params.project}.smoove.square.vcf.gz && cp $idx ${params.project}.smoove.square.vcf.gz.csi"
     }
     """
     $smoovepaste
 
-    smoove annotate --gff $gff ${project}.smoove.square.vcf.gz | bgzip --threads ${task.cpus} -c > ${project}.smoove.square.anno.vcf.gz
-    bcftools index ${project}.smoove.square.anno.vcf.gz
-    bpbio plot-sv-vcf ${project}.smoove.square.anno.vcf.gz
+    smoove annotate --gff $gff ${params.project}.smoove.square.vcf.gz | bgzip --threads ${task.cpus} -c > ${params.project}.smoove.square.anno.vcf.gz
+    bcftools index ${params.project}.smoove.square.anno.vcf.gz
+    bpbio plot-sv-vcf ${params.project}.smoove.square.anno.vcf.gz
     """
 }
 
@@ -425,17 +425,17 @@ process run_indexcov {
     file faidx
 
     output:
-    file("${project}*.png")
+    file("${params.project}*.png")
     file("*.html")
-    file("${project}*.bed.gz") into bed_ch
-    file("${project}*.ped") into indexcov_ped_ch
-    file("${project}*.roc") into roc_ch
+    file("${params.project}*.bed.gz") into bed_ch
+    file("${params.project}*.ped") into indexcov_ped_ch
+    file("${params.project}*.roc") into roc_ch
 
     script:
     excludepatt = params.exclude ? "--excludepatt \"${params.exclude}\"" : ""
     """
-    goleft indexcov --sex $sexchroms $excludepatt --directory $project --fai $faidx $idx
-    mv $project/* .
+    goleft indexcov --sex $sexchroms $excludepatt --directory ${params.project} --fai $faidx $idx
+    mv ${params.project}/* .
     """
 }
 
