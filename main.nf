@@ -403,7 +403,7 @@ process smoove_square {
     file("svvcf.html") into svvcf
 
     script:
-    smoovepaste = "smoove paste --outdir ./ --name $project $vcf"
+    smoovepaste = "smoove paste --outdir ./ --name ${params.project} $vcf"
     if( vcf.collect().size() < 2 ) {
         paste = "cp $vcf ${params.project}.smoove.square.vcf.gz && cp $idx ${params.project}.smoove.square.vcf.gz.csi"
     }
