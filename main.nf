@@ -172,7 +172,7 @@ process upload_alignments {
 
     script:
     """
-    sbg-uploader.sh --dry-run -t $token -p $sbgproject -f WGS/bam/ $bam $bai
+    sbg-uploader.sh -t $token -p $sbgproject -f WGS/bam/ $bam $bai
     """
 }
 
@@ -239,7 +239,7 @@ process upload_vcfs {
 
     script:
     """
-    sbg-uploader.sh --dry-run -t $token -p $sbgproject -f WGS/freebayes/ $vcf $tbi
+    sbg-uploader.sh -t $token -p $sbgproject -f WGS/freebayes/ $vcf $tbi
     """
 }
 
@@ -303,7 +303,7 @@ process upload_annotated_vcfs {
 
     script:
     """
-    sbg-uploader.sh --dry-run -t $token -p $sbgproject -f WGS/vep/ $vcf $tbi
+    sbg-uploader.sh -t $token -p $sbgproject -f WGS/vep/ $vcf $tbi
     """
 }
 
