@@ -259,7 +259,7 @@ process annotate_vcf {
     cadd = (params.caddsnv && params.caddindel) ? "--plugin CADD,${cadd_snv},${cadd_indel}" : ""
     """
     vep --input_file $vcf --output_file ${vcf.baseName}.vep.vcf --format vcf --assembly GRCh38 \
-        --cache --cache_version 98 --dir_cache /.vep --fork 2 $cadd --offline \
+        --cache --cache_version 95 --dir_cache /.vep --fork 2 $cadd --offline \
         --everything --filter_common --per_gene --total_length --vcf --force_overwrite \
         --buffer_size 15000
     gzip ${vcf.baseName}.vep.vcf
