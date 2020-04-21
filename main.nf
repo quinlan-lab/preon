@@ -10,14 +10,16 @@ params.intervals = false
 params.sbgproject = false
 params.bed = false
 params.gff = false
-authtoken = "$AUTH_TOKEN"
+params.upload = false
+params.authtoken = "$AUTH_TOKEN"
 
-if (!params.sbgproject) {
-    exit 1, "--sbgproject needs to specify the project"
+if (params.authtoken == "") {
+    // exit 1, "--authtoken for SevenBridges must be defined for data upload. See: https://docs.sevenbridges.com/docs/get-your-authentication-token"
+    log.info("Uploading to SevenBridges will be skipped without --authtoken or empty \$AUTH_TOKEN")
 }
 
-if (authtoken == "") {
-    exit 1, "--authtoken for SevenBridges must be defined for data upload. See: https://docs.sevenbridges.com/docs/get-your-authentication-token"
+if (params.authtoken && !params.sbgproject) {
+    exit 1, "--sbgproject needs to specify the SevenBridges project when specifying --authtoken or \$AUTH_TOKEN"
 }
 
 intervals = false
@@ -164,11 +166,13 @@ process upload_alignments {
     label 'upload'
 
     input:
-    val token from authtoken
+    val token from params.authtoken
     val sbgproject from params.sbgproject
     file(bam) from alignments_upload_ch
     file(bai) from alignment_indexes_upload_ch
 
+    when:
+    token != ""
 
     script:
     """
@@ -232,10 +236,13 @@ process upload_vcfs {
     label 'upload'
 
     input:
-    val token from authtoken
+    val token from params.authtoken
     val sbgproject from params.sbgproject
     file(vcf) from freebayesvcf_ch
     file(tbi) from freebayesvcfidx_ch
+
+    when:
+    token != ""
 
     script:
     """
@@ -296,10 +303,13 @@ process upload_annotated_vcfs {
     label 'upload'
 
     input:
-    val token from authtoken
+    val token from params.authtoken
     val sbgproject from params.sbgproject
     file(vcf) from vepvcf_ch
     file(tbi) from vepvcfidx_ch
+
+    when:
+    token != ""
 
     script:
     """
