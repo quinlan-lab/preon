@@ -13,6 +13,12 @@ params.gff = false
 params.upload = false
 params.authtoken = "$AUTH_TOKEN"
 
+// somatic VCF
+params.minquality = 20
+params.mindepth = 15
+params.maxao = 2
+params.somaticmask = false
+
 if (params.authtoken == "") {
     // exit 1, "--authtoken for SevenBridges must be defined for data upload. See: https://docs.sevenbridges.com/docs/get-your-authentication-token"
     log.info("Uploading to SevenBridges will be skipped without --authtoken or empty \$AUTH_TOKEN")
@@ -283,7 +289,7 @@ process merge_annotated_vcfs {
     file(faidx)
 
     output:
-    file("${params.project}.vcf.gz") into vepvcf_ch
+    file("${params.project}.vcf.gz") into {vepvcf_ch; somaticvcf_ch}
     file("${params.project}.vcf.gz.tbi") into vepvcfidx_ch
 
     script:
@@ -372,7 +378,7 @@ process smoove_merge {
 
 
 process smoove_genotype {
-    publishDir path: "$outdir/smoove/genotyped"
+    publishDir path: "$outdir/sv/smoove/genotyped"
 
     input:
     env SMOOVE_KEEP_ALL from params.sensitive
@@ -399,7 +405,7 @@ process smoove_genotype {
 
 
 process smoove_square {
-    publishDir path: "$outdir/smoove/annotated", pattern: "*.vcf.gz*"
+    publishDir path: "$outdir/sv/smoove/annotated", pattern: "*.vcf.gz*"
     publishDir path: "$outdir/reports/bpbio", pattern: "*.html"
 
     input:
@@ -468,5 +474,27 @@ process build_covviz_report {
     covviz --min-samples ${params.minsamples} --sex-chroms $sexchroms --exclude '${params.exclude}' \
         --skip-norm --z-threshold ${params.zthreshold} --distance-threshold ${params.distancethreshold} \
         --slop ${params.slop} --ped ${ped} --gff ${gff} ${bed}
+    """
+}
+
+
+process make_somatic {
+    publishDir path:  "$outdir/vep", mode: "copy"
+
+    input:
+    file vcf from
+    file mask from params.somaticmask
+
+    output:
+    file("somatic.vcf")
+
+    script:
+    """
+    bedtools intersect -a ${vcf} -b ${mask} -wa -u -header > masked.vcf
+    SnpSift filter "(QUAL >= ${params.minquality}) & (GEN[ALL].DP >= ${params.mindepth})" masked.vcf > filtered.vcf
+    bcftools view --min-alleles 2 --max-alleles 2 --output-file biallelic.vcf filtered.vcf
+    snpEff -i vcf -o vcf -noStats GRCh38.86 biallelic.vcf > snpeff.vcf
+    SnpSift filter "(GEN[0].AO<=${params.maxao})" snpeff.vcf | bgzip > somatic.vcf.gz
+    tabix -p vcf somatic.vcf.gz
     """
 }
