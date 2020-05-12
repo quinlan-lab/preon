@@ -1,0 +1,80 @@
+SOURCE=tow19-wgs.vcf.gz
+SAMPLES=16239X1 tow19_tumor
+
+QUAL_HIGHPASS=20
+SAMPLE_DP_HIGHPASS=15
+SOMATIC_AO_LOWPASS=2
+
+#LCR_BED=/scratch/ucgd/lustre-work/marth/u0991678/shared/res/LCR-hs37d5.bed.gz
+G1K_ACCESSIBILITY_BED=/scratch/ucgd/lustre-work/marth/u0991678/shared/res/20160622_grch38_pilot_mask.bed.gz
+
+all: dp-report.pdf somatic.vcf.gz
+
+.PHONY: all
+
+# Modules
+# R vcftools bedtools snpeff vt tabix
+
+dp-report.txt: $(addsuffix .DP.FORMAT, $(SAMPLES))
+	echo "SAMPLE	DEPTH" > $@
+	for sample in $(SAMPLES); do cat $$sample.DP.FORMAT | cut -f3 | grep -v $$sample | while read line; do echo "$$sample	$$line"; done; done >> $@
+
+dp-report.pdf: dp-report.txt
+	echo 'library("ggplot2");' > plot.r
+	echo 'data=read.csv("$<", sep="\t", header=T);' >> plot.r
+	echo 'p <- ggplot(data, aes(DEPTH, color=SAMPLE)) + geom_density() + xlim(0, 500);' >> plot.r
+	echo 'ggsave("$@", p, width=11, height=4, units="in");' >> plot.r
+	R CMD BATCH --no-save plot.r
+	rm plot.r
+
+dp-report100.pdf: dp-report.txt
+	echo 'library("ggplot2");' > plot.r
+	echo 'data=read.csv("$<", sep="\t", header=T);' >> plot.r
+	echo 'p <- ggplot(data, aes(DEPTH, color=SAMPLE)) + geom_density() + xlim(0, 100);' >> plot.r
+	echo 'ggsave("$@", p, width=11, height=4, units="in");' >> plot.r
+	R CMD BATCH --no-save plot.r
+	rm plot.r
+
+dp-report200.pdf: dp-report.txt
+	echo 'library("ggplot2");' > plot.r
+	echo 'data=read.csv("$<", sep="\t", header=T);' >> plot.r
+	echo 'p <- ggplot(data, aes(DEPTH, color=SAMPLE)) + geom_density() + xlim(0, 200);' >> plot.r
+	echo 'ggsave("$@", p, width=11, height=8, units="in");' >> plot.r
+	R CMD BATCH --no-save plot.r
+	rm plot.r
+
+#lcr-masked.vcf.gz: $(SOURCE)
+#	bedtools intersect -a $< -b $(LCR_BED) -wa -v -header | bgzip > $@
+
+masked.vcf.gz: $(SOURCE)
+	bedtools intersect -a $< -b $(G1K_ACCESSIBILITY_BED) -wa -u -header | bgzip > $@
+
+filtered.vcf.gz: masked.vcf.gz
+	zcat $< | snpsift filter "(QUAL >= $(QUAL_HIGHPASS)) & (GEN[ALL].DP >= $(SAMPLE_DP_HIGHPASS))" | bgzip > $@
+
+biallelic.vcf.gz: filtered.vcf.gz
+	vt view -f "N_ALLELE==2" $< -o $@
+
+multiallelic.vcf.gz: filtered.vcf.gz
+	vt view -f "N_ALLELE>2" $< -o $@
+
+snpeff.vcf.gz: biallelic.vcf.gz
+	bash -c "snpeff -i vcf -o vcf -noStats GRCh38.86 $<" | bgzip > $@
+	if [ ! $$? ]; then rm $@; fi
+
+snpeff-multiallelic.vcf.gz: multiallelic.vcf.gz
+	bash -c "snpeff -i vcf -o vcf -noStats GRCh38.86 $<" | bgzip > $@
+	if [ ! $$? ]; then rm $@; fi
+
+somatic.vcf.gz: snpeff.vcf.gz
+	zcat $< | snpsift filter "(GEN[0].AO<=$(SOMATIC_AO_LOWPASS))" | bgzip > $@
+	if [ ! $$? ]; then rm $@; fi
+
+%.DP.FORMAT: biallelic.vcf.gz
+	vcftools --gzvcf $< --indv $(basename $(basename $@)) --extract-FORMAT-info DP --out $(basename $(basename $@)) && sed -i 's/\./0/' $@
+	if [ ! $$? ]; then rm $@; fi
+
+clean:
+	rm -f exonic.vcf.gz filtered.exonic.vcf.gz snpeff.vcf.gz somatic.vcf.gz *.DP.FORMAT dp-report.* *.log temp-* *.Rout
+
+.PHONY: clean
