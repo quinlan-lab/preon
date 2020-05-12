@@ -473,7 +473,7 @@ process build_covviz_report {
     """
     covviz --min-samples ${params.minsamples} --sex-chroms $sexchroms --exclude '${params.exclude}' \
         --skip-norm --z-threshold ${params.zthreshold} --distance-threshold ${params.distancethreshold} \
-        --slop ${params.slop} --ped ${ped} --gff ${gff} ${bed}
+        --slop ${params.slop} --ped $ped --gff $gff $bed
     """
 }
 
@@ -482,18 +482,20 @@ process make_somatic {
     publishDir path:  "$outdir/vep", mode: "copy"
 
     input:
-    file vcf from
+    file vcf from somaticvcf_ch
     file mask from params.somaticmask
 
     output:
     file("somatic.vcf")
 
     script:
+    // entirely serial as each is dependent upon previous
+    // need to test failure rate of individual steps
     """
-    bedtools intersect -a ${vcf} -b ${mask} -wa -u -header > masked.vcf
+    bedtools intersect -a $vcf -b $mask -wa -u -header > masked.vcf
     SnpSift filter "(QUAL >= ${params.minquality}) & (GEN[ALL].DP >= ${params.mindepth})" masked.vcf > filtered.vcf
     bcftools view --min-alleles 2 --max-alleles 2 --output-file biallelic.vcf filtered.vcf
-    snpEff -i vcf -o vcf -noStats GRCh38.86 biallelic.vcf > snpeff.vcf
+    snpEff -Xmx16g -i vcf -o vcf -noStats GRCh38.86 biallelic.vcf > snpeff.vcf
     SnpSift filter "(GEN[0].AO<=${params.maxao})" snpeff.vcf | bgzip > somatic.vcf.gz
     tabix -p vcf somatic.vcf.gz
     """
