@@ -331,6 +331,7 @@ create_call_bams_ch
 
 
 process smoove_call {
+    label 'smoove'
     publishDir path: "$outdir/sv/smoove/called", pattern: "*.vcf.gz*"
     publishDir path: "$outdir/sv/logs", pattern: "*-stats.txt"
     publishDir path: "$outdir/sv/logs", pattern: "*-smoove-call.log"
@@ -361,6 +362,8 @@ process smoove_call {
 
 
 process smoove_merge {
+    label 'smoove'
+
     input:
     file vcf from call_vcfs.collect()
     file idx from call_idxs.collect()
@@ -378,6 +381,7 @@ process smoove_merge {
 
 
 process smoove_genotype {
+    label 'smoove'
     publishDir path: "$outdir/sv/smoove/genotyped"
 
     input:
@@ -405,6 +409,7 @@ process smoove_genotype {
 
 
 process smoove_square {
+    label 'smoove'
     publishDir path: "$outdir/sv/smoove/annotated", pattern: "*.vcf.gz*"
     publishDir path: "$outdir/reports/bpbio", pattern: "*.html"
 
@@ -434,6 +439,7 @@ process smoove_square {
 
 
 process run_indexcov {
+    label 'covviz'
     publishDir path: "$outdir/reports/indexcov"
 
     input:
