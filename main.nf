@@ -289,7 +289,7 @@ process merge_annotated_vcfs {
     file(faidx)
 
     output:
-    file("${params.project}.vcf.gz") into {vepvcf_ch; somaticvcf_ch}
+    file("${params.project}.vcf.gz") into (vepvcf_ch, somaticvcf_ch)
     file("${params.project}.vcf.gz.tbi") into vepvcfidx_ch
 
     script:
